@@ -1,10 +1,13 @@
-// server.js
-require('dotenv').config(); // โหลดค่าจาก .env
+require('dotenv').config();
 
 const express = require('express');
 const mysql = require('mysql2/promise');
-const bcrypt = require('bcrypt'); //เพิ่ม bcrypt
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken'); // ย้ายขึ้นมาที่นี่
 const app = express();
+const verifyToken = require('./middleware/auth');
+const SECRET_KEY = process.env.JWT_SECRET; // เอาขึ้นมาด้วย
+
 
 app.use(express.json());
 
@@ -28,26 +31,25 @@ app.get('/ping', async (req, res) => {
 });
 
 // GET users
-app.get('/users', async (req, res) => {
+// GET users (protected)
+app.get('/users', verifyToken, async (req, res) => {
   try {
-    const [rows] = await db.query('SELECT * FROM tbl_users');
+    const [rows] = await db.query('SELECT id, firstname, fullname, lastname FROM tbl_users');
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: 'Query failed' });
   }
 });
 
-// GET /users/:id - ดึงข้อมูลผู้ใช้ตาม id
-app.get('/users/:id', async (req, res, next) => {
-  const { id } = req.params; // ดึง id จาก URL เช่น /users/3
+// GET user by id (protected)
+app.get('/users/:id', verifyToken, async (req, res) => {
+  const { id } = req.params;
   try {
-    const [rows] = await db.query('SELECT * FROM tbl_users WHERE id = ?', [id]);
-    if (rows.length === 0) {
-      return res.status(404).json({ message: 'User not found' });
-    }
-    res.json(rows[0]); // ส่งผู้ใช้คนเดียวกลับไป
+    const [rows] = await db.query('SELECT id, firstname, fullname, lastname FROM tbl_users WHERE id = ?', [id]);
+    if (rows.length === 0) return res.status(404).json({ message: 'User not found' });
+    res.json(rows[0]);
   } catch (err) {
-    next(err);
+    res.status(500).json({ error: 'Query failed' });
   }
 });
 
@@ -81,11 +83,11 @@ app.post('/users', async (req, res) => {
 // PUT: อัปเดตข้อมูลผู้ใช้ + เปลี่ยนรหัสผ่านถ้ามีส่งมา
 app.put('/users/:id', async (req, res) => {
   const { id } = req.params;
-  const { firstname, fullname, lastname, password } = req.body;
+  const { firstname, fullname, lastname, username, password, status} = req.body;
 
   try {
-    let query = 'UPDATE tbl_users SET firstname = ?, fullname = ?, lastname = ?';
-    const params = [firstname, fullname, lastname];
+    let query = 'UPDATE tbl_users SET firstname = ?, fullname = ?, lastname = ?, username = ?';
+    const params = [firstname, fullname, lastname, username];
 
     // ถ้ามี password ใหม่ให้ hash แล้วอัปเดตด้วย
     if (password) {
@@ -124,6 +126,35 @@ app.delete('/users/:id', async (req, res) => {
     res.status(500).json({ error: 'Delete failed' });
   }
 });
+// POST: เข้าสู่ระบบ (Login)
+app.post('/login', async (req, res) => {
+  const { username, password } = req.body; // ใช้ fullname หรืออาจเปลี่ยนเป็น username ตามโครงสร้างจริง
+
+  try {
+    const [rows] = await db.query('SELECT * FROM tbl_users WHERE username = ?', [username]);
+    if (rows.length === 0) return res.status(401).json({ error: 'User not found' });
+
+    const user = rows[0];
+
+    // ตรวจสอบรหัสผ่าน
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) return res.status(401).json({ error: 'Invalid password' });
+
+    // สร้าง JWT token
+    const token = jwt.sign(
+      { id: user.id, fullname: user.fullname, lastname: user.lastname },
+      SECRET_KEY,
+      { expiresIn: '1h' } // อายุ token 1 ชั่วโมง
+    );
+
+    res.json({ message: 'Login successful', token });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+
 
 
 // เริ่มเซิร์ฟเวอร์
