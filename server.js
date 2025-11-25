@@ -123,20 +123,20 @@ app.get('/customers', verifyToken, async (req, res) => {
 // สมมติว่ามี db เป็น mysql2/promise pool และ verifyToken เป็น middleware ตรวจสอบ token
 app.post('/orders', verifyToken, async (req, res) => {
   try {
-    const { menu_id, quantity } = req.body;
+    const { restaurant_id, menu_id, quantity } = req.body;
 
-    if (!menu_id || !quantity) {
-      return res.status(400).json({ error: "Missing menu_id or quantity" });
+    if (!restaurant_id || !menu_id || !quantity) {
+      return res.status(400).json({ error: "Missing restaurant_id, menu_id, or quantity" });
     }
 
-    // ดึงข้อมูลเมนูพร้อมราคาจาก tbl_menus และ restaurant_id
+    // ตรวจสอบว่าเมนูมีในร้านนี้หรือไม่ และดึงราคา
     const [menuRows] = await db.query(
-      "SELECT id, restaurant_id, price FROM tbl_menus WHERE id = ?",
-      [menu_id]
+      "SELECT id, price FROM tbl_menus WHERE id = ? AND restaurant_id = ?",
+      [menu_id, restaurant_id]
     );
 
     if (menuRows.length === 0) {
-      return res.status(404).json({ error: "Menu not found" });
+      return res.status(404).json({ error: "Menu not found in this restaurant" });
     }
 
     const menu = menuRows[0];
@@ -144,7 +144,6 @@ app.post('/orders', verifyToken, async (req, res) => {
 
     // ดึง customer_id จาก token (req.user.id)
     const customer_id = req.user.id;
-    const restaurant_id = menu.restaurant_id;
 
     // บันทึกคำสั่งซื้อ
     const [result] = await db.query(
@@ -165,6 +164,7 @@ app.post('/orders', verifyToken, async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
+
 // GET /orders/summary - ต้องใช้ token
 app.get('/orders/summary', verifyToken, async (req, res) => {
   try {
